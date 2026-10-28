@@ -1,0 +1,117 @@
+name: Pipeline DevSecOps CI/CD
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  # --------------------------------------------------------
+  # Requisito 1: Deteção de Segredos com Gitleaks
+  # --------------------------------------------------------
+  gitleaks:
+    name: Gitleaks - Detetor de Segredos
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do Código
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Executar Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # --------------------------------------------------------
+  # Requisito 2: Análise Estática SAST com SonarCloud
+  # --------------------------------------------------------
+  sonarcloud:
+    name: SonarCloud - SAST & Quality Gate
+    runs-on: ubuntu-latest
+    needs: gitleaks
+    steps:
+      - name: Checkout do Código
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Análise SonarCloud
+        uses: SonarSource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  # --------------------------------------------------------
+  # Requisito 3: Construção da Imagem e Varredura com Trivy
+  # --------------------------------------------------------
+  trivy-scan:
+    name: Trivy - Varredura de Dependências e Imagem Docker
+    runs-on: ubuntu-latest
+    needs: sonarcloud
+    steps:
+      - name: Checkout do Código
+        uses: actions/checkout@v4
+
+      # 1. Análise de dependências no sistema de ficheiros (SCA)
+      - name: Trivy - Relatório de Vulnerabilidades Informativas (LOW/MEDIUM)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          ignore-unfixed: true
+          severity: 'LOW,MEDIUM'
+          exit-code: '0'
+          format: 'table'
+
+      - name: Trivy - Bloqueio de Vulnerabilidades Críticas (HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          ignore-unfixed: true
+          severity: 'HIGH,CRITICAL'
+          exit-code: '1'
+          format: 'table'
+
+      # Build da Imagem Docker local para inspeção
+      - name: Construir Imagem Docker
+        run: docker build -t app-devsecops:${{ github.sha }} .
+
+      # 2. Análise da imagem Docker construída
+      - name: Trivy - Varredura da Imagem Docker (HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'app-devsecops:${{ github.sha }}'
+          ignore-unfixed: true
+          severity: 'HIGH,CRITICAL'
+          exit-code: '1'
+          format: 'table'
+
+  # --------------------------------------------------------
+  # Requisito 4: Geração de SBOM com Syft e Publicação
+  # --------------------------------------------------------
+  sbom-syft:
+    name: Syft - Gerador de SBOM
+    runs-on: ubuntu-latest
+    needs: trivy-scan
+    steps:
+      - name: Checkout do Código
+        uses: actions/checkout@v4
+
+      - name: Construir Imagem Docker para SBOM
+        run: docker build -t app-devsecops:${{ github.sha }} .
+
+      - name: Instalar Syft
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+
+      - name: Gerar SBOM (Formato SPDX-JSON)
+        run: |
+          syft app-devsecops:${{ github.sha }} -o spdx-json=sbom.spdx.json
+
+      - name: Publicar Ficheiro SBOM como Artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-spdx-json
+          path: sbom.spdx.json
+          retention-days: 14

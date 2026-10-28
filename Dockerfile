@@ -1,6 +1,7 @@
 FROM node:22-alpine
 
-RUN apk update && apk upgrade --no-cache
+# Atualiza pacotes do SO Alpine e atualiza o npm global para a versão mais recente
+RUN apk update && apk upgrade --no-cache && npm install -g npm@latest
 
 WORKDIR /app
 

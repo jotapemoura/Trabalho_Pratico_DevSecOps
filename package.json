@@ -1,0 +1,12 @@
+{
+  "name": "app-devsecops",
+  "version": "1.0.0",
+  "description": "Aplicacao para o trabalho de DevSecOps UFLA",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "4.19.2"
+  }
+}
